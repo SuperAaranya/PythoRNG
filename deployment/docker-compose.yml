@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  pythorng-game:
+    build: .
+    container_name: pythorng-game
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./pythorng_data.json:/app/pythorng_data.json
+      - ./pythorng_backup.json:/app/pythorng_backup.json
+    networks:
+      - pythorng-net
+    stdin_open: true
+    tty: true
+
+  pythorng-launcher:
+    build:
+      context: ../../Macro
+      dockerfile: Dockerfile
+    container_name: pythorng-launcher
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./pythorng_data.json:/app/launcher/data/pythorng_data.json
+      - ./pythorng_backup.json:/app/launcher/data/pythorng_backup.json
+    depends_on:
+      - pythorng-game
+    networks:
+      - pythorng-net
+    stdin_open: true
+    tty: true
+
+networks:
+  pythorng-net:
+    driver: bridge
+

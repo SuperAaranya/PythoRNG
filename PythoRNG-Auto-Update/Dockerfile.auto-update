@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install git for cloning/pulling
+RUN apt-get update && apt-get install -y \
+    git \
+    python3-tk \
+    x11-apps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy configuration
+COPY .env* ./
+
+# Copy entrypoint script
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+# Set environment
+ENV PYTHONUNBUFFERED=1
+ENV DISPLAY=:0
+
+# Run the auto-update entrypoint
+CMD ["./entrypoint.sh"]

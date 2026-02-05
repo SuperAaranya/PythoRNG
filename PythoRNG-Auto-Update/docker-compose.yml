@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  pythorng-auto-update:
+    build:
+      context: .
+      dockerfile: Dockerfile.auto-update
+    container_name: pythorng-auto-update
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DISPLAY=${DISPLAY}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_BRANCH=${GITHUB_BRANCH:-main}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./code:/app
+    stdin_open: true
+    tty: true
+
+networks:
+  default:
+    name: pythorng-net
+    driver: bridge
