@@ -1,9 +1,7 @@
 @echo off
-REM PythoRNG - One-Click Game Launcher for Windows
 
 title PythoRNG - Starting...
 
-REM Check if Docker is installed
 docker --version >nul 2>&1
 if errorlevel 1 (
     echo.
@@ -23,11 +21,19 @@ echo.
 echo Docker found! Building and starting...
 echo.
 
-REM Build and start the containers
-docker-compose up --build
+cd /d "%%~dp0" 2>nul || cd /d "%~dp0"
 
-REM If we get here, something went wrong
+docker-compose -f "%~dp0docker-compose.yml" up --build
+if errorlevel 1 (
+    echo.
+    echo ERROR: Game failed to start
+    echo Check that Docker Desktop is running and the compose file exists
+    echo.
+    pause
+    exit /b 1
+)
+
 echo.
-echo ERROR: Game failed to start
+echo Game started successfully.
 pause
-exit /b 1
+exit /b 0

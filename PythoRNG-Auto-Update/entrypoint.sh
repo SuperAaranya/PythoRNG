@@ -1,74 +1,62 @@
-#!/bin/bash
-# PythoRNG Auto-Update Entrypoint
-# Handles pulling latest code from GitHub before running the application
-
-set -e
-
-echo "=========================================="
-echo "  PythoRNG - Auto-Update Launcher"
-echo "=========================================="
-echo ""
-
-# Load environment variables
-if [ -f .env ]; then
-    export $(cat .env | grep -v '^#' | xargs)
-    echo "✓ Configuration loaded from .env"
-else
-    echo "⚠ No .env file found - using defaults"
-    GITHUB_BRANCH=${GITHUB_BRANCH:-main}
-    UPDATE_CHECK_INTERVAL=${UPDATE_CHECK_INTERVAL:-0}
-fi
-
-# Validate required variables
-if [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_REPO" ]; then
-    echo "❌ ERROR: GITHUB_USERNAME and GITHUB_REPO must be set in .env"
-    echo ""
-    echo "Steps:"
-    echo "1. Copy .env.example to .env"
-    echo "2. Edit .env and fill in your GitHub username and repo name"
-    echo "3. Run this script again"
-    exit 1
-fi
-
-GITHUB_REPO_URL="https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
-BRANCH=${GITHUB_BRANCH:-main}
-
-echo "Repository: $GITHUB_REPO_URL"
-echo "Branch: $BRANCH"
-echo ""
-
-# Function to pull from GitHub
-pull_from_github() {
-    echo "⬇️  Checking for updates from GitHub..."
-    
-    if [ -d ".git" ]; then
-        echo "Repository already exists, pulling latest..."
-        git fetch origin
-        git checkout $BRANCH
-        git pull origin $BRANCH
-    else
-        echo "First-time setup: Cloning repository..."
-        git clone --branch $BRANCH $GITHUB_REPO_URL .
-    fi
-    
-    echo "✓ Repository updated"
-    echo ""
-}
-
-# Pull initial code
-pull_from_github
-
-# Start the application in background
 echo "🎮 Starting application..."
 echo ""
-
-cd PythoRNG
-python main.py &
-MAIN_PID=$!
-
-cd ../Macro
-python PythoRNG.py &
-LAUNCHER_PID=$!
-
-# Wait for both processes
-wait $MAIN_PID $LAUNCHER_PID
+#!/bin/bash
+set -e
+cd /app || exit 1
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs) || true
+fi
+if [ -z "$WEBHOOK_URL" ]; then
+    echo "Enter Discord webhook URL (or leave blank to skip):"
+    read -r WEBHOOK_URL_INPUT
+    if [ -n "$WEBHOOK_URL_INPUT" ]; then
+        echo "WEBHOOK_URL=$WEBHOOK_URL_INPUT" >> .env
+        export WEBHOOK_URL="$WEBHOOK_URL_INPUT"
+    fi
+fi
+if [ -z "$GITHUB_USERNAME" ] || [ -z "$GITHUB_REPO" ]; then
+    echo "ERROR: Set GITHUB_USERNAME and GITHUB_REPO in .env"
+    exit 1
+fi
+GITHUB_REPO_URL="https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
+BRANCH=${GITHUB_BRANCH:-main}
+UPDATE_INTERVAL=${UPDATE_CHECK_INTERVAL:-0}
+pull_repo(){
+    if [ -d ".git" ]; then
+        git fetch origin
+        git checkout "$BRANCH" || true
+        git pull origin "$BRANCH" || true
+    else
+        git clone --branch "$BRANCH" "$GITHUB_REPO_URL" .
+    fi
+}
+pull_repo
+start_apps(){
+    cd /app/PythoRNG || return
+    python main.py &
+    MAIN_PID=$!
+    cd /app/Macro || return
+    python PythoRNG.py &
+    LAUNCHER_PID=$!
+}
+stop_apps(){
+    kill ${MAIN_PID:-0} ${LAUNCHER_PID:-0} 2>/dev/null || true
+    wait ${MAIN_PID:-0} ${LAUNCHER_PID:-0} 2>/dev/null || true
+}
+start_apps
+if [ "$UPDATE_INTERVAL" -gt 0 ]; then
+    while true; do
+        sleep "$UPDATE_INTERVAL"
+        cd /app || continue
+        git fetch origin || continue
+        LOCAL=$(git rev-parse @ 2>/dev/null || echo)
+        REMOTE=$(git rev-parse origin/"$BRANCH" 2>/dev/null || echo)
+        if [ "$LOCAL" != "$REMOTE" ]; then
+            stop_apps
+            pull_repo
+            start_apps
+        fi
+    done
+else
+    wait ${MAIN_PID:-0} ${LAUNCHER_PID:-0}
+fi

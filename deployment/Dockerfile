@@ -10,3 +10,5 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "main.py"]
+
+LABEL org.opencontainers.image.source=https://github.com/SuperAaranya/PythoRNG

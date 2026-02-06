@@ -10,7 +10,7 @@ import json
 import socket
 from pathlib import Path
 
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # Set your Discord webhook URL in environment variable for security
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # Set your Discord webhook URL in here for SECURITY REASONS
 
 BASE_DIR = Path(__file__).parent.parent
 GAME_FOLDER = BASE_DIR / "Game" / "Game Making" / "PythoRNG"
