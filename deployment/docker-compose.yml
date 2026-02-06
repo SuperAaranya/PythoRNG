@@ -16,7 +16,7 @@ services:
 
   pythorng-launcher:
     build:
-      context: ../../Macro
+      context: ../../PythoRNG/Macro
       dockerfile: Dockerfile
     container_name: pythorng-launcher
     environment:
