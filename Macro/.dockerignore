@@ -1,0 +1,6 @@
+# .dockerignore for Macro service
+__pycache__
+*.py[cod]
+.env
+.env*
+*.log

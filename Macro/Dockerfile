@@ -1,14 +1,15 @@
 FROM python:3.11-slim
 
-WORKDIR /app/launcher
+WORKDIR /app
 
-COPY requirements.txt ./
+# Copy and install requirements
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY PythoRNG.py ./
-COPY ../Game/Game\ Making/PythoRNG/pythorng_data.json ./data/ 2>/dev/null || true
+# Copy launcher application
+COPY PythoRNG.py .
+
+# Create data directory for shared volume
+RUN mkdir -p /app/data
 
 ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:0
-
-CMD ["python", "PythoRNG.py"]

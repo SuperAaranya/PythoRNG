@@ -1,14 +1,14 @@
-version: '3.8'
-
 services:
   pythorng-game:
-    build: .
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
     container_name: pythorng-game
     environment:
       - PYTHONUNBUFFERED=1
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
     volumes:
-      - ./pythorng_data.json:/app/pythorng_data.json
-      - ./pythorng_backup.json:/app/pythorng_backup.json
+      - game-data:/app
     networks:
       - pythorng-net
     stdin_open: true
@@ -16,16 +16,14 @@ services:
 
   pythorng-launcher:
     build:
-      context: ../../PythoRNG/Macro
+      context: ../Macro
       dockerfile: Dockerfile
     container_name: pythorng-launcher
     environment:
       - PYTHONUNBUFFERED=1
-      - DISPLAY=${DISPLAY}
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ./pythorng_data.json:/app/launcher/data/pythorng_data.json
-      - ./pythorng_backup.json:/app/launcher/data/pythorng_backup.json
+      - game-data:/app/data
     depends_on:
       - pythorng-game
     networks:
@@ -33,7 +31,10 @@ services:
     stdin_open: true
     tty: true
 
+volumes:
+  game-data:
+    driver: local
+
 networks:
   pythorng-net:
     driver: bridge
-
