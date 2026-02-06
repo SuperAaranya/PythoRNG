@@ -1,20 +1,63 @@
 import tkinter as tk
-from tkinter import Canvas
+from tkinter import Canvas, messagebox
 import random
-import requests
-import threading
 import sys
 import time
 import json
 import os
-import socket
-from config import Config
+from pathlib import Path
 
-Config.ensure_directories()
+class ConfigManager:
+    def __init__(self):
+        self.base_dir = Path(__file__).parent
+        self.config_file = self.base_dir / "game_config.json"
+        self.data_file = self.base_dir / "pythorng_data.json"
+        self.backup_file = self.base_dir / "pythorng_backup.json"
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.settings = self.load_settings()
+    
+    def load_settings(self):
+        default_settings = {
+            "auto_roll_speed": 150,
+            "animation_speed": 10,
+            "particle_count_multiplier": 1.0,
+            "biome_change_min": 180000,
+            "biome_change_max": 300000,
+            "notification_threshold": 500,
+            "window_width": 750,
+            "window_height": 700,
+            "show_particle_effects": True,
+            "canvas_width": 680,
+            "canvas_height": 150,
+            "glitch_biome_duration_min": 90000,
+            "glitch_biome_duration_max": 150000,
+            "hell_biome_duration_min": 120000,
+            "hell_biome_duration_max": 240000,
+            "corruption_biome_duration_min": 150000,
+            "corruption_biome_duration_max": 240000
+        }
+        
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    loaded = json.load(f)
+                    default_settings.update(loaded)
+            except:
+                pass
+        
+        return default_settings
+    
+    def save_settings(self, settings):
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"Error saving settings: {e}")
 
-WEBHOOK_URL = Config.WEBHOOK_URL
-DATA_FILE = Config.DATA_FILE
-BACKUP_FILE = Config.BACKUP_FILE
+config_manager = ConfigManager()
+DATA_FILE = config_manager.data_file
+BACKUP_FILE = config_manager.backup_file
 
 COLOR_SCHEME = {
     "bg_dark": "#0a0a0f",
@@ -24,7 +67,13 @@ COLOR_SCHEME = {
     "border": "#16213e",
     "text_primary": "#00ffcc",
     "text_secondary": "#888888",
-    "text_light": "#ffffff"
+    "text_light": "#ffffff",
+    "text_success": "#00ff99",
+    "text_warning": "#ffaa00",
+    "text_error": "#ff3333",
+    "accent_gold": "#ffdd00",
+    "accent_purple": "#bb44ff",
+    "accent_red": "#ff3333"
 }
 
 BIOME_COLORS = {
@@ -34,52 +83,69 @@ BIOME_COLORS = {
     "Corruption": {"bg": "#0f0520", "text": "#bb44ff", "accent": "#bb44ff"}
 }
 
-BIOME_DIVISORS = {
-    "Normal": 10,      
-    "Glitch": 1,    
-    "Hell": 1,        
-    "Corruption": 1   
-}
+class AuraDatabase:
+    def __init__(self):
+        self.auras = []
+        self.setup_auras()
+    
+    def setup_auras(self):
+        self.add_aura("Common", 2, None)
+        self.add_aura("Uncommon", 4, None)
+        self.add_aura("Rare", 8, None)
+        self.add_aura("Super Rare", 25, None)
+        self.add_aura("Epic", 100, None)
+        self.add_aura("Legendary", 250, None)
+        self.add_aura("Mythic", 500, None)
+        self.add_aura("Divine", 1000, None)
+        self.add_aura("Ascended", 1750, None)
+        
+        self.add_aura("Celestial", 2500, "Glitch")
+        self.add_aura("Void Walker", 3000, "Glitch")
+        
+        self.add_aura("Infernal", 1500, "Hell")
+        self.add_aura("Demon Lord", 2000, "Hell")
+        
+        self.add_aura("Corrupted", 1200, "Corruption")
+        self.add_aura("Eldritch", 1800, "Corruption")
+    
+    def add_aura(self, name, rarity, biome):
+        self.auras.append({"name": name, "rarity": rarity, "bio": biome})
+    
+    def get_applicable_auras(self, current_biome):
+        applicable = []
+        for aura in self.auras:
+            if aura["bio"] is None:
+                applicable.append(aura.copy())
+            elif aura["bio"] == current_biome:
+                applicable.append(aura.copy())
+            else:
+                modified_aura = aura.copy()
+                modified_aura["rarity"] = aura["rarity"] * 100
+                applicable.append(modified_aura)
+        return applicable
 
 class PythoRNG:
     def __init__(self, root):
         self.root = root
-        self.root.title("Pytho-RNG: Game Client")
-        self.root.geometry("700x650")
+        self.settings = config_manager.settings
+        
+        self.root.title("Pytho-RNG: Game Client v2.0")
+        self.root.geometry(f"{self.settings['window_width']}x{self.settings['window_height']}")
         self.root.configure(bg=COLOR_SCHEME["bg_dark"])
         
         self.auto_rolling = False
         self.current_biome = "Normal"
         self.roll_count = 0
         self.animation_running = False
-        self.is_online = True
         
-        self.auras = []
-        self.setup_auras()
+        self.aura_db = AuraDatabase()
         self.load_data()
         self.setup_ui()
         self.biome_tick()
-        self.check_connectivity_loop()
-
-    def setup_auras(self):
-        self.add_aura("Common", 2, None)
-        self.add_aura("Uncommon", 4, None)
-        self.add_aura("Rare", 8, None)
-        self.add_aura("Epic", 100, None)
-        self.add_aura("Legendary", 250, None)
-        self.add_aura("Mythic", 500, None)
-        self.add_aura("Divine", 1000, None)
-        
-        self.add_aura("Celestial", 2500, "Glitch")
-        self.add_aura("Infernal", 1500, "Hell")
-        self.add_aura("Corrupted", 1200, "Corruption")
-
-    def add_aura(self, name, rarity, bio):
-        self.auras.append({"name": name, "rarity": rarity, "bio": bio})
 
     def load_data(self):
         try:
-            if os.path.exists(DATA_FILE):
+            if DATA_FILE.exists():
                 with open(DATA_FILE, 'r') as f:
                     data = json.load(f)
                     self.roll_count = data.get("total_rolls", 0)
@@ -90,7 +156,7 @@ class PythoRNG:
 
     def load_backup_data(self):
         try:
-            if os.path.exists(BACKUP_FILE):
+            if BACKUP_FILE.exists():
                 with open(BACKUP_FILE, 'r') as f:
                     data = json.load(f)
                     self.roll_count = data.get("total_rolls", 0)
@@ -107,7 +173,7 @@ class PythoRNG:
                 "version": 2
             }
             
-            if os.path.exists(DATA_FILE):
+            if DATA_FILE.exists():
                 try:
                     with open(DATA_FILE, 'r') as f:
                         old_data = json.load(f)
@@ -119,48 +185,291 @@ class PythoRNG:
             with open(DATA_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
             
-            print(f"Data saved: {self.roll_count} rolls")
         except Exception as e:
             print(f"Critical error saving data: {e}")
 
     def setup_ui(self):
-        header_frame = tk.Frame(self.root, bg=COLOR_SCHEME["bg_header"], height=90)
+        header_frame = tk.Frame(self.root, bg=COLOR_SCHEME["bg_header"], height=100)
         header_frame.pack(fill="x")
         header_frame.pack_propagate(False)
         
-        title_frame = tk.Frame(header_frame, bg=COLOR_SCHEME["bg_header"])
-        title_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        title_container = tk.Frame(header_frame, bg=COLOR_SCHEME["bg_header"])
+        title_container.pack(fill="both", expand=True, padx=15, pady=15)
         
-        self.lbl_title = tk.Label(title_frame, text="PYTHO-RNG", font=("Impact", 40), bg=COLOR_SCHEME["bg_header"], fg=COLOR_SCHEME["text_primary"])
+        self.lbl_title = tk.Label(title_container, 
+                                  text="PYTHO-RNG", 
+                                  font=("Impact", 44), 
+                                  bg=COLOR_SCHEME["bg_header"], 
+                                  fg=COLOR_SCHEME["text_primary"])
         self.lbl_title.pack(side="left")
         
-        stats_label = tk.Label(title_frame, text=f"Rolls: {self.roll_count}", font=("Arial", 12), bg=COLOR_SCHEME["bg_header"], fg=COLOR_SCHEME["text_secondary"])
-        stats_label.pack(side="right", padx=10)
-        self.lbl_stats_header = stats_label
-
-        self.lbl_biome = tk.Label(self.root, text="Biome: Normal", font=("Verdana", 18, "bold"), bg=COLOR_SCHEME["bg_dark"], fg=COLOR_SCHEME["text_light"], anchor="center")
-        self.lbl_biome.pack(pady=15)
-
-        self.canvas = Canvas(self.root, width=650, height=140, bg=COLOR_SCHEME["bg_display"], highlightthickness=2, highlightbackground=COLOR_SCHEME["border"])
-        self.canvas.pack(pady=10, padx=10)
+        stats_container = tk.Frame(title_container, bg=COLOR_SCHEME["bg_header"])
+        stats_container.pack(side="right")
         
-        self.lbl_res = tk.Label(self.root, text="Press ROLL to begin", font=("Arial", 20, "bold"), bg=COLOR_SCHEME["bg_panel"], fg=COLOR_SCHEME["text_secondary"], width=40, height=3, relief="ridge", bd=3, anchor="center")
-        self.lbl_res.pack(pady=15)
+        self.lbl_stats_header = tk.Label(stats_container, 
+                                         text=f"Total Rolls: {self.roll_count}", 
+                                         font=("Arial", 13, "bold"), 
+                                         bg=COLOR_SCHEME["bg_header"], 
+                                         fg=COLOR_SCHEME["text_secondary"])
+        self.lbl_stats_header.pack(anchor="e")
 
-        self.lbl_count = tk.Label(self.root, text="Rolls: 0", font=("Arial", 14, "bold"), bg=COLOR_SCHEME["bg_dark"], fg=COLOR_SCHEME["text_primary"], anchor="center")
-        self.lbl_count.pack(pady=8)
+        self.lbl_biome = tk.Label(self.root, 
+                                 text="Biome: Normal", 
+                                 font=("Verdana", 19, "bold"), 
+                                 bg=COLOR_SCHEME["bg_dark"], 
+                                 fg=COLOR_SCHEME["text_light"], 
+                                 anchor="center")
+        self.lbl_biome.pack(pady=18)
+
+        self.canvas = Canvas(self.root, 
+                            width=self.settings["canvas_width"], 
+                            height=self.settings["canvas_height"], 
+                            bg=COLOR_SCHEME["bg_display"], 
+                            highlightthickness=3, 
+                            highlightbackground=COLOR_SCHEME["border"])
+        self.canvas.pack(pady=12, padx=15)
         
-        self.connection_label = tk.Label(self.root, text="Status: CHECKING...", font=("Arial", 10, "bold"), bg=COLOR_SCHEME["bg_dark"], fg="#ffaa00", anchor="center")
-        self.connection_label.pack(pady=5)
+        self.lbl_res = tk.Label(self.root, 
+                               text="Press ROLL to begin", 
+                               font=("Arial", 22, "bold"), 
+                               bg=COLOR_SCHEME["bg_panel"], 
+                               fg=COLOR_SCHEME["text_secondary"], 
+                               width=38, 
+                               height=3, 
+                               relief="ridge", 
+                               bd=4, 
+                               anchor="center")
+        self.lbl_res.pack(pady=18)
+
+        info_frame = tk.Frame(self.root, bg=COLOR_SCHEME["bg_dark"])
+        info_frame.pack(pady=10)
+        
+        self.lbl_count = tk.Label(info_frame, 
+                                 text="Session Rolls: 0", 
+                                 font=("Arial", 14, "bold"), 
+                                 bg=COLOR_SCHEME["bg_dark"], 
+                                 fg=COLOR_SCHEME["text_primary"], 
+                                 anchor="center")
+        self.lbl_count.pack(side="left", padx=15)
 
         btn_frame = tk.Frame(self.root, bg=COLOR_SCHEME["bg_dark"])
-        btn_frame.pack(pady=12)
+        btn_frame.pack(pady=15)
 
-        self.btn_roll = tk.Button(btn_frame, text="ROLL", command=self.manual_roll, font=("Arial", 16, "bold"), bg="#0066ff", fg="white", activebackground="#0044aa", width=14, height=2, cursor="hand2", relief="raised", bd=3)
-        self.btn_roll.grid(row=0, column=0, padx=8)
+        self.btn_roll = tk.Button(btn_frame, 
+                                  text="ROLL", 
+                                  command=self.manual_roll, 
+                                  font=("Arial", 17, "bold"), 
+                                  bg="#0066ff", 
+                                  fg="white", 
+                                  activebackground="#0044aa", 
+                                  width=16, 
+                                  height=2, 
+                                  cursor="hand2", 
+                                  relief="raised", 
+                                  bd=4)
+        self.btn_roll.grid(row=0, column=0, padx=10)
 
-        self.btn_auto = tk.Button(btn_frame, text="AUTO: OFF", command=self.toggle_auto, font=("Arial", 14, "bold"), bg="#ff3333", fg="white", width=14, height=2, cursor="hand2", relief="raised", bd=3)
-        self.btn_auto.grid(row=0, column=1, padx=8)
+        self.btn_auto = tk.Button(btn_frame, 
+                                  text="AUTO: OFF", 
+                                  command=self.toggle_auto, 
+                                  font=("Arial", 15, "bold"), 
+                                  bg=COLOR_SCHEME["accent_red"], 
+                                  fg="white", 
+                                  width=16, 
+                                  height=2, 
+                                  cursor="hand2", 
+                                  relief="raised", 
+                                  bd=4)
+        self.btn_auto.grid(row=0, column=1, padx=10)
+        
+        self.btn_settings = tk.Button(btn_frame, 
+                                      text="SETTINGS", 
+                                      command=self.open_settings, 
+                                      font=("Arial", 15, "bold"), 
+                                      bg="#ffaa00", 
+                                      fg="black", 
+                                      width=16, 
+                                      height=2, 
+                                      cursor="hand2", 
+                                      relief="raised", 
+                                      bd=4)
+        self.btn_settings.grid(row=0, column=2, padx=10)
+
+    def open_settings(self):
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Game Settings")
+        settings_window.geometry("600x700")
+        settings_window.configure(bg=COLOR_SCHEME["bg_panel"])
+        settings_window.transient(self.root)
+        
+        tk.Label(settings_window, 
+                text="GAME SETTINGS", 
+                font=("Impact", 26),
+                bg=COLOR_SCHEME["bg_panel"], 
+                fg=COLOR_SCHEME["text_primary"]).pack(pady=15)
+        
+        canvas = tk.Canvas(settings_window, bg=COLOR_SCHEME["bg_panel"], highlightthickness=0)
+        scrollbar = tk.Scrollbar(settings_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=COLOR_SCHEME["bg_panel"])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        settings_vars = {}
+        
+        def create_setting(parent, label_text, setting_key, setting_type="int", min_val=None, max_val=None):
+            frame = tk.Frame(parent, bg=COLOR_SCHEME["bg_panel"])
+            frame.pack(pady=8, padx=20, fill="x")
+            
+            tk.Label(frame, 
+                    text=label_text, 
+                    font=("Arial", 11, "bold"),
+                    bg=COLOR_SCHEME["bg_panel"], 
+                    fg=COLOR_SCHEME["text_light"],
+                    anchor="w").pack(side="left", fill="x", expand=True)
+            
+            if setting_type == "bool":
+                var = tk.BooleanVar(value=self.settings[setting_key])
+                cb = tk.Checkbutton(frame, 
+                                   variable=var,
+                                   bg=COLOR_SCHEME["bg_panel"],
+                                   activebackground=COLOR_SCHEME["bg_panel"],
+                                   selectcolor=COLOR_SCHEME["bg_display"])
+                cb.pack(side="right")
+            else:
+                var = tk.StringVar(value=str(self.settings[setting_key]))
+                entry = tk.Entry(frame, 
+                               textvariable=var,
+                               font=("Arial", 10),
+                               width=15,
+                               bg=COLOR_SCHEME["bg_display"],
+                               fg=COLOR_SCHEME["text_light"],
+                               insertbackground=COLOR_SCHEME["text_primary"])
+                entry.pack(side="right")
+            
+            settings_vars[setting_key] = (var, setting_type)
+        
+        tk.Label(scrollable_frame, 
+                text="Performance Settings", 
+                font=("Arial", 13, "bold"),
+                bg=COLOR_SCHEME["bg_panel"], 
+                fg=COLOR_SCHEME["accent_gold"]).pack(pady=(10, 5), anchor="w", padx=20)
+        
+        create_setting(scrollable_frame, "Auto Roll Speed (ms)", "auto_roll_speed", "int")
+        create_setting(scrollable_frame, "Animation Speed (ms)", "animation_speed", "int")
+        create_setting(scrollable_frame, "Particle Multiplier", "particle_count_multiplier", "float")
+        create_setting(scrollable_frame, "Show Particle Effects", "show_particle_effects", "bool")
+        
+        tk.Label(scrollable_frame, 
+                text="Biome Settings", 
+                font=("Arial", 13, "bold"),
+                bg=COLOR_SCHEME["bg_panel"], 
+                fg=COLOR_SCHEME["accent_gold"]).pack(pady=(15, 5), anchor="w", padx=20)
+        
+        create_setting(scrollable_frame, "Normal Biome Min Duration (ms)", "biome_change_min", "int")
+        create_setting(scrollable_frame, "Normal Biome Max Duration (ms)", "biome_change_max", "int")
+        create_setting(scrollable_frame, "Glitch Biome Min Duration (ms)", "glitch_biome_duration_min", "int")
+        create_setting(scrollable_frame, "Glitch Biome Max Duration (ms)", "glitch_biome_duration_max", "int")
+        create_setting(scrollable_frame, "Hell Biome Min Duration (ms)", "hell_biome_duration_min", "int")
+        create_setting(scrollable_frame, "Hell Biome Max Duration (ms)", "hell_biome_duration_max", "int")
+        create_setting(scrollable_frame, "Corruption Biome Min Duration (ms)", "corruption_biome_duration_min", "int")
+        create_setting(scrollable_frame, "Corruption Biome Max Duration (ms)", "corruption_biome_duration_max", "int")
+        
+        tk.Label(scrollable_frame, 
+                text="Display Settings", 
+                font=("Arial", 13, "bold"),
+                bg=COLOR_SCHEME["bg_panel"], 
+                fg=COLOR_SCHEME["accent_gold"]).pack(pady=(15, 5), anchor="w", padx=20)
+        
+        create_setting(scrollable_frame, "Window Width", "window_width", "int")
+        create_setting(scrollable_frame, "Window Height", "window_height", "int")
+        create_setting(scrollable_frame, "Canvas Width", "canvas_width", "int")
+        create_setting(scrollable_frame, "Canvas Height", "canvas_height", "int")
+        
+        def save_settings():
+            try:
+                for key, (var, var_type) in settings_vars.items():
+                    if var_type == "int":
+                        self.settings[key] = int(var.get())
+                    elif var_type == "float":
+                        self.settings[key] = float(var.get())
+                    elif var_type == "bool":
+                        self.settings[key] = var.get()
+                    else:
+                        self.settings[key] = var.get()
+                
+                config_manager.save_settings(self.settings)
+                
+                messagebox.showinfo("Success", "Settings saved! Restart the game for all changes to take effect.")
+                settings_window.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
+        
+        def reset_defaults():
+            if messagebox.askyesno("Reset Settings", "Are you sure you want to reset all settings to defaults?"):
+                default_settings = {
+                    "auto_roll_speed": 150,
+                    "animation_speed": 10,
+                    "particle_count_multiplier": 1.0,
+                    "biome_change_min": 180000,
+                    "biome_change_max": 300000,
+                    "window_width": 750,
+                    "window_height": 700,
+                    "show_particle_effects": True,
+                    "canvas_width": 680,
+                    "canvas_height": 150,
+                    "glitch_biome_duration_min": 90000,
+                    "glitch_biome_duration_max": 150000,
+                    "hell_biome_duration_min": 120000,
+                    "hell_biome_duration_max": 240000,
+                    "corruption_biome_duration_min": 150000,
+                    "corruption_biome_duration_max": 240000
+                }
+                
+                for key, (var, var_type) in settings_vars.items():
+                    if key in default_settings:
+                        if var_type == "bool":
+                            var.set(default_settings[key])
+                        else:
+                            var.set(str(default_settings[key]))
+        
+        btn_frame = tk.Frame(scrollable_frame, bg=COLOR_SCHEME["bg_panel"])
+        btn_frame.pack(pady=20)
+        
+        tk.Button(btn_frame, 
+                 text="Save Settings", 
+                 command=save_settings,
+                 font=("Arial", 13, "bold"),
+                 bg=COLOR_SCHEME["text_success"],
+                 fg="black",
+                 width=15,
+                 cursor="hand2").pack(side="left", padx=5)
+        
+        tk.Button(btn_frame, 
+                 text="Reset to Defaults", 
+                 command=reset_defaults,
+                 font=("Arial", 13, "bold"),
+                 bg=COLOR_SCHEME["text_warning"],
+                 fg="black",
+                 width=15,
+                 cursor="hand2").pack(side="left", padx=5)
+        
+        tk.Button(btn_frame, 
+                 text="Close", 
+                 command=settings_window.destroy,
+                 font=("Arial", 13, "bold"),
+                 bg=COLOR_SCHEME["text_secondary"],
+                 fg="white",
+                 width=15,
+                 cursor="hand2").pack(side="left", padx=5)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        scrollbar.pack(side="right", fill="y")
 
     def biome_tick(self):
         rng = random.randint(1, 1000)
@@ -176,44 +485,34 @@ class PythoRNG:
 
         colors = BIOME_COLORS[self.current_biome]
         self.root.configure(bg=colors["bg"])
-        self.lbl_biome.config(text=f"Biome: {self.current_biome}", fg=colors["text"])
-
+        self.lbl_biome.config(fg=colors["text"])
+        
         self.lbl_biome.config(text=f"Biome: {self.current_biome}")
         print(f"BIOME_UPDATE:{self.current_biome}")
         sys.stdout.flush()
         
         if self.current_biome == "Glitch":
-            duration = random.randint(90000, 150000)
+            duration = random.randint(
+                self.settings["glitch_biome_duration_min"],
+                self.settings["glitch_biome_duration_max"]
+            )
         elif self.current_biome == "Hell":
-            duration = random.randint(120000, 240000)
+            duration = random.randint(
+                self.settings["hell_biome_duration_min"],
+                self.settings["hell_biome_duration_max"]
+            )
         elif self.current_biome == "Corruption":
-            duration = random.randint(150000, 240000)
+            duration = random.randint(
+                self.settings["corruption_biome_duration_min"],
+                self.settings["corruption_biome_duration_max"]
+            )
         else:
-            duration = random.randint(180000, 300000)
+            duration = random.randint(
+                self.settings["biome_change_min"],
+                self.settings["biome_change_max"]
+            )
         
         self.root.after(duration, self.biome_tick)
-
-    def check_connectivity(self):
-        try:
-            socket.create_connection(("8.8.8.8", 53), timeout=3)
-            return True
-        except (socket.timeout, socket.error):
-            return False
-    
-    def check_connectivity_loop(self):
-        was_online = self.is_online
-        self.is_online = self.check_connectivity()
-        
-        if was_online and not self.is_online:
-            print("OFFLINE_DETECTED:Webhooks disabled")
-            self.connection_label.config(text="Status: OFFLINE", fg="#ff0000")
-            sys.stdout.flush()
-        elif not was_online and self.is_online:
-            print("ONLINE_DETECTED:Webhooks enabled")
-            self.connection_label.config(text="Status: ONLINE", fg="#00ff00")
-            sys.stdout.flush()
-        
-        self.root.after(5000, self.check_connectivity_loop)
 
     def manual_roll(self):
         if not self.animation_running:
@@ -221,7 +520,7 @@ class PythoRNG:
 
     def toggle_auto(self):
         self.auto_rolling = not self.auto_rolling
-        color = "#00cc44" if self.auto_rolling else "#ff3333"
+        color = "#00cc44" if self.auto_rolling else COLOR_SCHEME["accent_red"]
         state = "ON" if self.auto_rolling else "OFF"
         self.btn_auto.config(text=f"AUTO: {state}", bg=color)
         if self.auto_rolling:
@@ -231,85 +530,88 @@ class PythoRNG:
         if self.auto_rolling:
             if not self.animation_running:
                 self.roll()
-            self.root.after(150, self.auto_loop)
+            self.root.after(self.settings["auto_roll_speed"], self.auto_loop)
 
     def roll(self):
         self.roll_count += 1
-        self.lbl_count.config(text=f"Rolls: {self.roll_count}")
+        self.lbl_count.config(text=f"Session Rolls: {self.roll_count}")
+        self.lbl_stats_header.config(text=f"Total Rolls: {self.roll_count}")
         self.save_data()
         
-        applicable = []
-        for aura in self.auras:
-            if aura["bio"] is None:
-                applicable.append(aura)
-            elif aura["bio"] == self.current_biome:
-                applicable.append(aura)
-            else:
-                applicable.append({**aura, "rarity": aura["rarity"] * 100})
-        
+        applicable = self.aura_db.get_applicable_auras(self.current_biome)
         applicable.sort(key=lambda x: x["rarity"], reverse=True)
         
         found = applicable[-1]
         
-        for a in applicable:
-            if random.randint(1, a["rarity"]) == 1:
-                found = a
+        for aura in applicable:
+            if random.randint(1, aura["rarity"]) == 1:
+                found = aura
                 break
         
         self.animate_roll(found)
         print(f"ROLL:{found['name']}:{found['rarity']}")
         sys.stdout.flush()
 
-        if found["rarity"] >= 500:
-            threading.Thread(target=self.send_webhook, args=(found,), daemon=True).start()
-
     def animate_roll(self, final_aura):
         self.animation_running = True
         self.canvas.delete("all")
         
         rarity = final_aura["rarity"]
-        if rarity >= 2500:
+        
+        if rarity >= 3000:
+            color = "#00ffff"
+        elif rarity >= 2500:
             color = "#ff00ff"
+        elif rarity >= 2000:
+            color = "#ff1a1a"
+        elif rarity >= 1500:
+            color = "#ffaa00"
         elif rarity >= 1000:
-            color = "#ffdd00"
+            color = COLOR_SCHEME["accent_gold"]
         elif rarity >= 500:
             color = "#ff6600"
         elif rarity >= 250:
             color = "#ff0066"
         elif rarity >= 100:
             color = "#9933ff"
-        elif rarity >= 50:
+        elif rarity >= 25:
             color = "#0099ff"
         else:
             color = "#aaaaaa"
         
-        self.lbl_res.config(text=f"{final_aura['name']} (1/{final_aura['rarity']})", fg=color, bg=COLOR_SCHEME["bg_panel"])
+        self.lbl_res.config(text=f"{final_aura['name']} (1/{final_aura['rarity']})", 
+                           fg=color, 
+                           bg=COLOR_SCHEME["bg_panel"])
         self.lbl_res.place(relx=0.5, y=-100, anchor="center")
         
-        def slide_down(current_y=-100, target_y=210):
+        def slide_down(current_y=-100, target_y=230):
             if current_y < target_y:
                 self.lbl_res.place(relx=0.5, y=current_y, anchor="center")
-                self.root.after(10, lambda: slide_down(current_y + 8, target_y))
+                self.root.after(self.settings["animation_speed"], lambda: slide_down(current_y + 9, target_y))
             else:
-                self.lbl_res.place(relx=0.5, y=210, anchor="center")
-                self.draw_particles(final_aura)
+                self.lbl_res.place(relx=0.5, y=230, anchor="center")
+                if self.settings["show_particle_effects"]:
+                    self.draw_particles(final_aura)
                 self.animation_running = False
         
         slide_down()
 
     def draw_particles(self, aura):
         rarity = aura["rarity"]
-        particle_count = min(60, rarity // 15)
+        base_count = min(80, max(20, rarity // 12))
+        particle_count = int(base_count * self.settings["particle_count_multiplier"])
         
         for _ in range(particle_count):
-            x = random.randint(50, 600)
-            y = random.randint(10, 130)
-            size = random.randint(2, 8)
+            x = random.randint(60, self.settings["canvas_width"] - 60)
+            y = random.randint(15, self.settings["canvas_height"] - 15)
+            size = random.randint(3, 10)
             
-            if rarity >= 1000:
-                color = random.choice(["#ffdd00", "#ff00ff", "#00ffff", "#ffff00"])
+            if rarity >= 2500:
+                color = random.choice(["#ff00ff", "#00ffff", "#ffff00", "#ff00ff"])
+            elif rarity >= 1000:
+                color = random.choice([COLOR_SCHEME["accent_gold"], "#ffff00", "#ff00ff", "#00ffff"])
             elif rarity >= 500:
-                color = random.choice(["#ff6600", "#ffdd00", "#ff8800"])
+                color = random.choice(["#ff6600", COLOR_SCHEME["accent_gold"], "#ff8800"])
             elif rarity >= 250:
                 color = random.choice(["#ff0066", "#ff33cc", "#ff6699"])
             elif rarity >= 100:
@@ -318,346 +620,11 @@ class PythoRNG:
                 color = random.choice(["#aaaaaa", "#bbbbbb", "#cccccc"])
             
             self.canvas.create_oval(x, y, x+size, y+size, fill=color, outline="")
-
-    def send_webhook(self, aura):
-        if not self.is_online:
-            print(f"WEBHOOK_SKIPPED:Offline")
-            sys.stdout.flush()
-            return
-        
-        embed = {
-            "embeds": [{
-                "title": "LEGENDARY DROP",
-                "description": f"{aura['name']} has been obtained!",
-                "color": 0x00ffcc,
-                "fields": [
-                    {"name": "Rarity", "value": f"1/{aura['rarity']}", "inline": True},
-                    {"name": "Biome", "value": self.current_biome, "inline": True},
-                    {"name": "Total Rolls", "value": str(self.roll_count), "inline": True}
-                ],
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            }]
-        }
-        
-        try:
-            response = requests.post(WEBHOOK_URL, json=embed, timeout=5)
-            if response.status_code == 204:
-                print(f"WEBHOOK_SUCCESS:{aura['name']}")
-            else:
-                print(f"WEBHOOK_FAILED:{response.status_code}")
-            sys.stdout.flush()
-        except Exception as e:
-            print(f"WEBHOOK_ERROR:{str(e)}")
-            sys.stdout.flush()
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = PythoRNG(root)
-    root.mainloop()
-
-class PythoRNG:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Pytho-RNG: Game Client")
-        self.root.geometry("600x500")
-        self.root.configure(bg="#0a0a0f")
-        
-        self.auto_rolling = False
-        self.current_biome = "Normal"
-        self.roll_count = 0
-        self.animation_running = False
-        self.is_online = True
-        
-        self.auras = []
-        self.setup_auras()
-        self.load_data()
-        self.setup_ui()
-        self.biome_tick()
-        self.check_connectivity_loop()
-
-    def setup_auras(self):
-        self.add_aura("Common", 2, None)
-        self.add_aura("Uncommon", 4, None)
-        self.add_aura("Rare", 8, None)
-        self.add_aura("Epic", 100, None)
-        self.add_aura("Legendary", 250, None)
-        self.add_aura("Mythic", 500, None)
-        self.add_aura("Divine", 1000, None)
-        
-        self.add_aura("Celestial", 2500, "Glitch")
-        self.add_aura("Infernal", 1500, "Hell")
-        self.add_aura("Corrupted", 1200, "Corruption")
-
-    def add_aura(self, name, rarity, bio):
-        self.auras.append({"name": name, "rarity": rarity, "bio": bio})
-
-    def load_data(self):
-        try:
-            if os.path.exists(DATA_FILE):
-                with open(DATA_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.roll_count = data.get("total_rolls", 0)
-                    print(f"Data loaded: {self.roll_count} total rolls")
-        except Exception as e:
-            print(f"Error loading data (trying backup): {e}")
-            self.load_backup_data()
-
-    def load_backup_data(self):
-        try:
-            if os.path.exists(BACKUP_FILE):
-                with open(BACKUP_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.roll_count = data.get("total_rolls", 0)
-                    print(f"Backup data restored: {self.roll_count} total rolls")
-        except Exception as e:
-            print(f"Error loading backup data: {e}")
-            self.roll_count = 0
-
-    def save_data(self):
-        try:
-            data = {
-                "total_rolls": self.roll_count,
-                "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "version": 2
-            }
             
-            if os.path.exists(DATA_FILE):
-                try:
-                    with open(DATA_FILE, 'r') as f:
-                        old_data = json.load(f)
-                    with open(BACKUP_FILE, 'w') as f:
-                        json.dump(old_data, f, indent=2)
-                except:
-                    pass
-            
-            with open(DATA_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            print(f"Data saved: {self.roll_count} rolls")
-        except Exception as e:
-            print(f"Critical error saving data: {e}")
-
-    def setup_ui(self):
-        header_frame = tk.Frame(self.root, bg="#1a1a2e", height=80)
-        header_frame.pack(fill="x")
-        header_frame.pack_propagate(False)
-        
-        self.lbl_title = tk.Label(header_frame, text="PYTHO-RNG", font=("Impact", 32), bg="#1a1a2e", fg="#00ffcc")
-        self.lbl_title.pack(pady=20)
-
-        self.lbl_biome = tk.Label(self.root, text="Biome: Normal", font=("Verdana", 16, "bold"), bg="#0a0a0f", fg="#ffffff", anchor="center")
-        self.lbl_biome.pack(pady=15)
-
-        self.canvas = Canvas(self.root, width=500, height=120, bg="#0a0a0f", highlightthickness=0)
-        self.canvas.pack(pady=10)
-        
-        self.lbl_res = tk.Label(self.root, text="Press ROLL to begin", font=("Arial", 18, "bold"), bg="#1e1e2e", fg="#aaaaaa", width=35, height=3, relief="ridge", bd=3, anchor="center")
-        self.lbl_res.pack(pady=20)
-
-        self.lbl_count = tk.Label(self.root, text="Rolls: 0", font=("Arial", 12), bg="#0a0a0f", fg="#888888", anchor="center")
-        self.lbl_count.pack(pady=5)
-        
-        self.connection_label = tk.Label(self.root, text="Status: ONLINE", font=("Arial", 9), bg="#0a0a0f", fg="#00ff99", anchor="center")
-        self.connection_label.pack(pady=5)
-
-        btn_frame = tk.Frame(self.root, bg="#0a0a0f")
-        btn_frame.pack(pady=10)
-
-        self.btn_roll = tk.Button(btn_frame, text="ROLL", command=self.manual_roll, font=("Arial", 16, "bold"), bg="#0066ff", fg="white", activebackground="#0044aa", width=12, height=2, cursor="hand2")
-        self.btn_roll.grid(row=0, column=0, padx=10)
-
-        self.btn_auto = tk.Button(btn_frame, text="AUTO: OFF", command=self.toggle_auto, font=("Arial", 14, "bold"), bg="#ff3333", fg="white", width=12, height=2, cursor="hand2")
-        self.btn_auto.grid(row=0, column=1, padx=10)
-
-    def biome_tick(self):
-        rng = random.randint(1, 1000)
-        
-        if rng == 1: 
-            self.current_biome = "Glitch" 
-            self.root.configure(bg="#0f000f")
-            self.lbl_biome.config(fg="#ff00ff")
-        elif rng <= 10: 
-            self.current_biome = "Hell" 
-            self.root.configure(bg="#1a0000")
-            self.lbl_biome.config(fg="#ff4444")
-        elif rng <= 30: 
-            self.current_biome = "Corruption" 
-            self.root.configure(bg="#0f0520")
-            self.lbl_biome.config(fg="#bb44ff")
-        else: 
-            self.current_biome = "Normal"
-            self.root.configure(bg="#0a0a0f")
-            self.lbl_biome.config(fg="#ffffff")
-
-        self.lbl_biome.config(text=f"Biome: {self.current_biome}")
-        print(f"BIOME_UPDATE:{self.current_biome}")
-        sys.stdout.flush()
-        
-        if self.current_biome == "Glitch":
-            duration = random.randint(90000, 150000)
-        elif self.current_biome == "Hell":
-            duration = random.randint(120000, 240000)
-        elif self.current_biome == "Corruption":
-            duration = random.randint(150000, 240000)
-        else:
-            duration = random.randint(180000, 300000)
-        
-        self.root.after(duration, self.biome_tick)
-
-    def check_connectivity(self):
-        try:
-            socket.create_connection(("8.8.8.8", 53), timeout=3)
-            return True
-        except (socket.timeout, socket.error):
-            return False
-    
-    def check_connectivity_loop(self):
-        was_online = self.is_online
-        self.is_online = self.check_connectivity()
-        
-        if was_online and not self.is_online:
-            print("OFFLINE_DETECTED:Webhooks disabled")
-            self.connection_label.config(text="Status: OFFLINE - Webhooks Disabled", fg="#ff3333")
-            sys.stdout.flush()
-        elif not was_online and self.is_online:
-            print("ONLINE_DETECTED:Webhooks enabled")
-            self.connection_label.config(text="Status: ONLINE - Webhooks Enabled", fg="#00ff99")
-            sys.stdout.flush()
-        
-        self.root.after(5000, self.check_connectivity_loop)
-
-    def manual_roll(self):
-        if not self.animation_running:
-            self.roll()
-
-    def toggle_auto(self):
-        self.auto_rolling = not self.auto_rolling
-        color = "#00cc44" if self.auto_rolling else "#ff3333"
-        state = "ON" if self.auto_rolling else "OFF"
-        self.btn_auto.config(text=f"AUTO: {state}", bg=color)
-        if self.auto_rolling:
-            self.auto_loop()
-
-    def auto_loop(self):
-        if self.auto_rolling:
-            if not self.animation_running:
-                self.roll()
-            self.root.after(150, self.auto_loop)
-
-    def roll(self):
-        self.roll_count += 1
-        self.lbl_count.config(text=f"Rolls: {self.roll_count}")
-        self.save_data()
-        
-        applicable = []
-        for aura in self.auras:
-            if aura["bio"] is None:
-                applicable.append(aura)
-            elif aura["bio"] == self.current_biome:
-                applicable.append(aura)
-            else:
-                applicable.append({**aura, "rarity": aura["rarity"] * 100})
-        
-        applicable.sort(key=lambda x: x["rarity"], reverse=True)
-        
-        found = applicable[-1]
-        
-        for a in applicable:
-            if random.randint(1, a["rarity"]) == 1:
-                found = a
-                break
-        
-        self.animate_roll(found)
-        print(f"ROLL:{found['name']}:{found['rarity']}")
-        sys.stdout.flush()
-
-        if found["rarity"] >= 500:
-            threading.Thread(target=self.send_webhook, args=(found,), daemon=True).start()
-
-    def animate_roll(self, final_aura):
-        self.animation_running = True
-        self.canvas.delete("all")
-        
-        rarity = final_aura["rarity"]
-        if rarity >= 2500:
-            color = "#ff00ff"
-        elif rarity >= 1000:
-            color = "#ffdd00"
-        elif rarity >= 500:
-            color = "#ff6600"
-        elif rarity >= 250:
-            color = "#ff0066"
-        elif rarity >= 100:
-            color = "#9933ff"
-        elif rarity >= 50:
-            color = "#0099ff"
-        else:
-            color = "#aaaaaa"
-        
-        self.lbl_res.config(text=f"{final_aura['name']} (1/{final_aura['rarity']})", fg=color, bg="#1e1e2e")
-        self.lbl_res.place(relx=0.5, y=-100, anchor="center")
-        
-        def slide_down(current_y=-100, target_y=210):
-            if current_y < target_y:
-                self.lbl_res.place(relx=0.5, y=current_y, anchor="center")
-                self.root.after(10, lambda: slide_down(current_y + 8, target_y))
-            else:
-                self.lbl_res.place(relx=0.5, y=210, anchor="center")
-                self.draw_particles(final_aura)
-                self.animation_running = False
-        
-        slide_down()
-
-    def draw_particles(self, aura):
-        rarity = aura["rarity"]
-        particle_count = min(50, rarity // 20)
-        
-        for _ in range(particle_count):
-            x = random.randint(50, 450)
-            y = random.randint(10, 110)
-            size = random.randint(2, 6)
-            
-            if rarity >= 1000:
-                color = random.choice(["#ffdd00", "#ff00ff", "#00ffff"])
-            elif rarity >= 500:
-                color = random.choice(["#ff6600", "#ffdd00"])
-            elif rarity >= 100:
-                color = random.choice(["#9933ff", "#ff0066"])
-            else:
-                color = "#aaaaaa"
-            
-            self.canvas.create_oval(x, y, x+size, y+size, fill=color, outline="")
-
-    def send_webhook(self, aura):
-        if not self.is_online:
-            print(f"WEBHOOK_SKIPPED:Offline")
-            sys.stdout.flush()
-            return
-        
-        embed = {
-            "embeds": [{
-                "title": "LEGENDARY DROP",
-                "description": f"**{aura['name']}** has been obtained!",
-                "color": 0x00ffcc,
-                "fields": [
-                    {"name": "Rarity", "value": f"1/{aura['rarity']}", "inline": True},
-                    {"name": "Biome", "value": self.current_biome, "inline": True},
-                    {"name": "Total Rolls", "value": str(self.roll_count), "inline": True}
-                ],
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            }]
-        }
-        
-        try:
-            response = requests.post(WEBHOOK_URL, json=embed, timeout=5)
-            if response.status_code == 204:
-                print(f"WEBHOOK_SUCCESS:{aura['name']}")
-            else:
-                print(f"WEBHOOK_FAILED:{response.status_code}")
-            sys.stdout.flush()
-        except Exception as e:
-            print(f"WEBHOOK_ERROR:{str(e)}")
-            sys.stdout.flush()
+            if rarity >= 1000 and random.random() < 0.3:
+                star_size = random.randint(1, 3)
+                star_char = random.choice(["*", "+", "x"])
+                self.canvas.create_text(x, y, text=star_char, fill=color, font=("Arial", star_size*5))
 
 if __name__ == "__main__":
     root = tk.Tk()
