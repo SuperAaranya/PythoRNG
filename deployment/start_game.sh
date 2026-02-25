@@ -22,7 +22,7 @@ echo "Docker found! Building and starting..."
 echo ""
 
 # Build and start the containers
-docker-compose up --build
+docker compose up --build
 
 # If we get here, something went wrong
 echo ""

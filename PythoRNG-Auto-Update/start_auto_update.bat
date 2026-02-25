@@ -50,6 +50,6 @@ echo Branch: %GITHUB_BRANCH%
 echo.
 
 REM Build and start with auto-update
-docker-compose -f docker-compose.yml up --build
+docker compose -f docker-compose.yml up --build
 
 pause

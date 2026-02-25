@@ -21,9 +21,9 @@ echo.
 echo Docker found! Building and starting...
 echo.
 
-cd /d "%%~dp0" 2>nul || cd /d "%~dp0"
+cd /d "%~dp0"
 
-docker-compose -f "%~dp0docker-compose.yml" up --build
+docker compose -f "%~dp0docker-compose.yml" up --build
 if errorlevel 1 (
     echo.
     echo ERROR: Game failed to start

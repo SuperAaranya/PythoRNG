@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Build and run Pytho-RNG
+set -e
 
-echo "Building Pytho-RNG Docker image..."
-docker build -t pythorng:latest .
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-echo "Starting Pytho-RNG..."
-docker-compose up
+echo "Starting Pytho-RNG with Docker Compose..."
+docker compose -f docker-compose.yml up --build
 
 echo "Done! Press Ctrl+C to stop."

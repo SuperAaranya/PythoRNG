@@ -13,3 +13,5 @@ COPY PythoRNG.py .
 RUN mkdir -p /app/data
 
 ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "PythoRNG.py"]

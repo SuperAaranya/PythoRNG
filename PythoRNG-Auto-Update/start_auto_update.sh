@@ -42,6 +42,6 @@ echo "Branch: ${GITHUB_BRANCH:-main}"
 echo ""
 
 # Start with auto-update
-docker-compose -f docker-compose.yml up --build
+docker compose -f docker-compose.yml up --build
 
 read -p "Press Enter to exit..."

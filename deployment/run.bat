@@ -1,11 +1,10 @@
 @echo off
 REM Build and run Pytho-RNG on Windows
 
-echo Building Pytho-RNG Docker image...
-docker build -t pythorng:latest .
+cd /d "%~dp0"
 
 echo Starting Pytho-RNG with Docker Compose...
-docker-compose up
+docker compose -f docker-compose.yml up --build
 
 echo Done! Press Ctrl+C to stop.
 pause
