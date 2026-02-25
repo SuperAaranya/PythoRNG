@@ -3,12 +3,12 @@ from tkinter import scrolledtext, messagebox, filedialog
 import subprocess
 import threading
 import sys
-import os
 import time
 import requests
 import json
 import socket
 from pathlib import Path
+from json import JSONDecodeError
 
 class ConfigManager:
     def __init__(self):
@@ -20,7 +20,7 @@ class ConfigManager:
             try:
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
-            except:
+            except (OSError, JSONDecodeError):
                 return {}
         return {}
     
@@ -78,7 +78,6 @@ class Launcher:
     
     def check_configuration(self):
         game_folder = self.config_manager.get("game_folder")
-        webhook_url = self.config_manager.get("webhook_url")
         
         if not game_folder:
             return False
@@ -173,7 +172,7 @@ class Launcher:
             
             try:
                 threshold_val = int(threshold) if threshold else 500
-            except:
+            except ValueError:
                 threshold_val = 500
             
             self.config_manager.set("game_folder", game_folder)
@@ -409,7 +408,7 @@ class Launcher:
             self.process = subprocess.Popen(
                 cmd, 
                 stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, 
                 creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
                 text=True,
                 bufsize=1
@@ -430,9 +429,9 @@ class Launcher:
                 break
             line = line.strip()
             if line:
-                self.parse_data(line)
+                self.root.after(0, self.parse_data, line)
         
-        self.on_game_closed()
+        self.root.after(0, self.on_game_closed)
     
     def parse_data(self, line):
         if line.startswith("BIOME_UPDATE:"):
@@ -452,10 +451,15 @@ class Launcher:
                 self.lbl_biome.config(fg=COLORS["text_light"])
             
         elif line.startswith("ROLL:"):
-            parts = line.split(":")
+            parts = line.split(":", 2)
             if len(parts) >= 3:
                 name = parts[1]
                 rarity = parts[2]
+                try:
+                    rarity_val = int(rarity)
+                except ValueError:
+                    self.log_msg(f"Malformed roll payload: {line}")
+                    return
                 
                 self.total_rolls += 1
                 self.session_rolls += 1
@@ -464,7 +468,6 @@ class Launcher:
                 self.lbl_session_rolls.config(text=f"Session Rolls: {self.session_rolls}")
                 self.lbl_last_roll.config(text=f"{name} (1/{rarity})")
                 
-                rarity_val = int(rarity)
                 if rarity_val >= 2500:
                     self.lbl_last_roll.config(fg="#ff00ff")
                     self.log_msg(f"CELESTIAL: {name} (1/{rarity})")
@@ -497,14 +500,20 @@ class Launcher:
                 
                 self.lbl_rare_count.config(text=f"Rare Finds: {len(self.rare_finds)}")
     
+
     def send_webhook(self, name, rarity, tier):
         if not self.is_online:
             self.log_msg("Webhook skipped: offline")
             return
-        
-        rarity_val = int(rarity)
+
+        try:
+            rarity_val = int(rarity)
+        except ValueError:
+            self.log_msg(f"Webhook skipped: invalid rarity {rarity}")
+            return
+
         rarity_display = f"1:{rarity_val:,}"
-        
+
         if tier == "CELESTIAL":
             embed_color = 0xFF00FF
         elif tier == "DIVINE":
@@ -513,64 +522,64 @@ class Launcher:
             embed_color = 0xFF6600
         else:
             embed_color = 0xFF0066
-        
+
         current_biome = self.lbl_biome.cget("text").replace("Biome: ", "")
-        
+
         description_lines = [
-            f"════════════════════════",
-            f"    **{name.upper()}**",
-            f"════════════════════════",
+            "=" * 24,
+            f"    {name.upper()}",
+            "=" * 24,
             "",
             f"An incredibly rare {tier} tier aura has manifested!",
             "",
-            f"━━━━━━━━━━━━━━━━━━━━━━"
+            "-" * 24,
         ]
-        
+
         embed = {
             "embeds": [{
-                "title": f"⚡ {tier} AURA OBTAINED ⚡",
+                "title": f"{tier} AURA OBTAINED",
                 "description": "\n".join(description_lines),
                 "color": embed_color,
                 "fields": [
                     {
-                        "name": "💎 Aura Name",
+                        "name": "Aura Name",
                         "value": f"```fix\n{name}\n```",
                         "inline": True
                     },
                     {
-                        "name": "🎲 Rarity Odds",
+                        "name": "Rarity Odds",
                         "value": f"```yaml\n{rarity_display}\n```",
                         "inline": True
                     },
                     {
-                        "name": "🌍 Biome",
+                        "name": "Biome",
                         "value": f"```css\n{current_biome}\n```",
                         "inline": True
                     },
                     {
-                        "name": "📊 Total Rolls",
+                        "name": "Total Rolls",
                         "value": f"```apache\n{self.total_rolls:,}\n```",
                         "inline": True
                     },
                     {
-                        "name": "⏱️ Timestamp",
+                        "name": "Timestamp",
                         "value": f"```{time.strftime('%Y-%m-%d %H:%M:%S')}```",
                         "inline": True
                     },
                     {
-                        "name": "🎯 Tier",
+                        "name": "Tier",
                         "value": f"```diff\n+ {tier} TIER\n```",
                         "inline": True
                     }
                 ],
                 "footer": {
-                    "text": f"Pytho-RNG Launcher • Powered by Divine RNG"
+                    "text": "Pytho-RNG Launcher"
                 },
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             }],
             "username": "Pytho-RNG Bot"
         }
-        
+
         try:
             response = requests.post(self.webhook_url, json=embed, timeout=5)
             if response.status_code == 204:
@@ -579,8 +588,11 @@ class Launcher:
                 self.log_msg(f"Webhook failed: {response.status_code}")
         except Exception as e:
             self.log_msg(f"Webhook error: {str(e)}")
-    
+
     def log_msg(self, msg):
+        if threading.current_thread() is not threading.main_thread():
+            self.root.after(0, self.log_msg, msg)
+            return
         timestamp = time.strftime("%H:%M:%S")
         self.log_box.config(state="normal")
         self.log_box.insert("end", f"[{timestamp}] {msg}\n")

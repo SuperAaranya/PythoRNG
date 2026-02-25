@@ -4,8 +4,28 @@ import random
 import sys
 import time
 import json
-import os
 from pathlib import Path
+from json import JSONDecodeError
+
+DEFAULT_SETTINGS = {
+    "auto_roll_speed": 150,
+    "animation_speed": 10,
+    "particle_count_multiplier": 1.0,
+    "biome_change_min": 180000,
+    "biome_change_max": 300000,
+    "notification_threshold": 500,
+    "window_width": 750,
+    "window_height": 700,
+    "show_particle_effects": True,
+    "canvas_width": 680,
+    "canvas_height": 150,
+    "glitch_biome_duration_min": 90000,
+    "glitch_biome_duration_max": 150000,
+    "hell_biome_duration_min": 120000,
+    "hell_biome_duration_max": 240000,
+    "corruption_biome_duration_min": 150000,
+    "corruption_biome_duration_max": 240000
+}
 
 class ConfigManager:
     def __init__(self):
@@ -18,42 +38,72 @@ class ConfigManager:
         self.settings = self.load_settings()
     
     def load_settings(self):
-        default_settings = {
-            "auto_roll_speed": 150,
-            "animation_speed": 10,
-            "particle_count_multiplier": 1.0,
-            "biome_change_min": 180000,
-            "biome_change_max": 300000,
-            "notification_threshold": 500,
-            "window_width": 750,
-            "window_height": 700,
-            "show_particle_effects": True,
-            "canvas_width": 680,
-            "canvas_height": 150,
-            "glitch_biome_duration_min": 90000,
-            "glitch_biome_duration_max": 150000,
-            "hell_biome_duration_min": 120000,
-            "hell_biome_duration_max": 240000,
-            "corruption_biome_duration_min": 150000,
-            "corruption_biome_duration_max": 240000
-        }
+        default_settings = DEFAULT_SETTINGS.copy()
         
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
                     loaded = json.load(f)
                     default_settings.update(loaded)
-            except:
+            except (OSError, JSONDecodeError):
                 pass
         
-        return default_settings
+        return self.sanitize_settings(default_settings)
     
     def save_settings(self, settings):
         try:
+            settings = self.sanitize_settings(settings)
             with open(self.config_file, 'w') as f:
                 json.dump(settings, f, indent=2)
         except Exception as e:
             print(f"Error saving settings: {e}")
+
+    def sanitize_settings(self, settings):
+        cleaned = DEFAULT_SETTINGS.copy()
+        cleaned.update(settings)
+
+        int_keys = [
+            "auto_roll_speed", "animation_speed", "biome_change_min", "biome_change_max",
+            "notification_threshold", "window_width", "window_height", "canvas_width",
+            "canvas_height", "glitch_biome_duration_min", "glitch_biome_duration_max",
+            "hell_biome_duration_min", "hell_biome_duration_max",
+            "corruption_biome_duration_min", "corruption_biome_duration_max",
+        ]
+        for key in int_keys:
+            try:
+                cleaned[key] = int(cleaned[key])
+            except (TypeError, ValueError):
+                cleaned[key] = int(DEFAULT_SETTINGS[key])
+
+        try:
+            cleaned["particle_count_multiplier"] = float(cleaned["particle_count_multiplier"])
+        except (TypeError, ValueError):
+            cleaned["particle_count_multiplier"] = DEFAULT_SETTINGS["particle_count_multiplier"]
+
+        cleaned["show_particle_effects"] = bool(cleaned["show_particle_effects"])
+
+        cleaned["auto_roll_speed"] = max(1, cleaned["auto_roll_speed"])
+        cleaned["animation_speed"] = max(1, cleaned["animation_speed"])
+        cleaned["notification_threshold"] = max(1, cleaned["notification_threshold"])
+        cleaned["window_width"] = max(500, cleaned["window_width"])
+        cleaned["window_height"] = max(500, cleaned["window_height"])
+        cleaned["canvas_width"] = max(140, cleaned["canvas_width"])
+        cleaned["canvas_height"] = max(40, cleaned["canvas_height"])
+        cleaned["particle_count_multiplier"] = max(0.0, cleaned["particle_count_multiplier"])
+
+        duration_pairs = [
+            ("biome_change_min", "biome_change_max"),
+            ("glitch_biome_duration_min", "glitch_biome_duration_max"),
+            ("hell_biome_duration_min", "hell_biome_duration_max"),
+            ("corruption_biome_duration_min", "corruption_biome_duration_max"),
+        ]
+        for min_key, max_key in duration_pairs:
+            cleaned[min_key] = max(1000, cleaned[min_key])
+            cleaned[max_key] = max(1000, cleaned[max_key])
+            if cleaned[min_key] > cleaned[max_key]:
+                cleaned[min_key], cleaned[max_key] = cleaned[max_key], cleaned[min_key]
+
+        return cleaned
 
 config_manager = ConfigManager()
 DATA_FILE = config_manager.data_file
@@ -135,7 +185,8 @@ class PythoRNG:
         
         self.auto_rolling = False
         self.current_biome = "Normal"
-        self.roll_count = 0
+        self.total_rolls = 0
+        self.session_rolls = 0
         self.animation_running = False
         
         self.aura_db = AuraDatabase()
@@ -148,8 +199,8 @@ class PythoRNG:
             if DATA_FILE.exists():
                 with open(DATA_FILE, 'r') as f:
                     data = json.load(f)
-                    self.roll_count = data.get("total_rolls", 0)
-                    print(f"Data loaded: {self.roll_count} total rolls")
+                    self.total_rolls = int(data.get("total_rolls", 0))
+                    print(f"Data loaded: {self.total_rolls} total rolls")
         except Exception as e:
             print(f"Error loading data (trying backup): {e}")
             self.load_backup_data()
@@ -159,16 +210,16 @@ class PythoRNG:
             if BACKUP_FILE.exists():
                 with open(BACKUP_FILE, 'r') as f:
                     data = json.load(f)
-                    self.roll_count = data.get("total_rolls", 0)
-                    print(f"Backup data restored: {self.roll_count} total rolls")
+                    self.total_rolls = int(data.get("total_rolls", 0))
+                    print(f"Backup data restored: {self.total_rolls} total rolls")
         except Exception as e:
             print(f"Error loading backup data: {e}")
-            self.roll_count = 0
+            self.total_rolls = 0
 
     def save_data(self):
         try:
             data = {
-                "total_rolls": self.roll_count,
+                "total_rolls": self.total_rolls,
                 "last_updated": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "version": 2
             }
@@ -179,7 +230,7 @@ class PythoRNG:
                         old_data = json.load(f)
                     with open(BACKUP_FILE, 'w') as f:
                         json.dump(old_data, f, indent=2)
-                except:
+                except (OSError, json.JSONDecodeError):
                     pass
             
             with open(DATA_FILE, 'w') as f:
@@ -207,7 +258,7 @@ class PythoRNG:
         stats_container.pack(side="right")
         
         self.lbl_stats_header = tk.Label(stats_container, 
-                                         text=f"Total Rolls: {self.roll_count}", 
+                                         text=f"Total Rolls: {self.total_rolls}", 
                                          font=("Arial", 13, "bold"), 
                                          bg=COLOR_SCHEME["bg_header"], 
                                          fg=COLOR_SCHEME["text_secondary"])
@@ -403,6 +454,7 @@ class PythoRNG:
                     else:
                         self.settings[key] = var.get()
                 
+                self.settings = config_manager.sanitize_settings(self.settings)
                 config_manager.save_settings(self.settings)
                 
                 messagebox.showinfo("Success", "Settings saved! Restart the game for all changes to take effect.")
@@ -412,24 +464,7 @@ class PythoRNG:
         
         def reset_defaults():
             if messagebox.askyesno("Reset Settings", "Are you sure you want to reset all settings to defaults?"):
-                default_settings = {
-                    "auto_roll_speed": 150,
-                    "animation_speed": 10,
-                    "particle_count_multiplier": 1.0,
-                    "biome_change_min": 180000,
-                    "biome_change_max": 300000,
-                    "window_width": 750,
-                    "window_height": 700,
-                    "show_particle_effects": True,
-                    "canvas_width": 680,
-                    "canvas_height": 150,
-                    "glitch_biome_duration_min": 90000,
-                    "glitch_biome_duration_max": 150000,
-                    "hell_biome_duration_min": 120000,
-                    "hell_biome_duration_max": 240000,
-                    "corruption_biome_duration_min": 150000,
-                    "corruption_biome_duration_max": 240000
-                }
+                default_settings = DEFAULT_SETTINGS
                 
                 for key, (var, var_type) in settings_vars.items():
                     if key in default_settings:
@@ -533,9 +568,10 @@ class PythoRNG:
             self.root.after(self.settings["auto_roll_speed"], self.auto_loop)
 
     def roll(self):
-        self.roll_count += 1
-        self.lbl_count.config(text=f"Session Rolls: {self.roll_count}")
-        self.lbl_stats_header.config(text=f"Total Rolls: {self.roll_count}")
+        self.session_rolls += 1
+        self.total_rolls += 1
+        self.lbl_count.config(text=f"Session Rolls: {self.session_rolls}")
+        self.lbl_stats_header.config(text=f"Total Rolls: {self.total_rolls}")
         self.save_data()
         
         applicable = self.aura_db.get_applicable_auras(self.current_biome)
@@ -600,10 +636,12 @@ class PythoRNG:
         rarity = aura["rarity"]
         base_count = min(80, max(20, rarity // 12))
         particle_count = int(base_count * self.settings["particle_count_multiplier"])
+        canvas_width = max(140, int(self.settings["canvas_width"]))
+        canvas_height = max(40, int(self.settings["canvas_height"]))
         
         for _ in range(particle_count):
-            x = random.randint(60, self.settings["canvas_width"] - 60)
-            y = random.randint(15, self.settings["canvas_height"] - 15)
+            x = random.randint(10, canvas_width - 10)
+            y = random.randint(5, canvas_height - 5)
             size = random.randint(3, 10)
             
             if rarity >= 2500:
